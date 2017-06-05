@@ -49,6 +49,7 @@ def readData(dataFile):
     labels = []
     text = []
     label=[]
+    #存放标签，以及这些标签对应的编号（即这些标签第几个第一次出现）
     obydic=dict()
     file = codecs.open(dataFile, 'r')  #  default encoding.
     obyid=0
@@ -57,6 +58,7 @@ def readData(dataFile):
     for line in file:
         #print line
         line = line.strip()
+        #就是说以原来文件中的空行为分隔符，每一段为，前两列为特征，最后一列为标签
         if len(line) == 0:
             if len(text)>0:
                 texts.append(text)
@@ -128,7 +130,7 @@ def readTemplate(tmpFile):
     print "Valid Template Line Number:",len(tlist)
     return tlist
 
-
+# texts:总的数据，seqid:第几个训练段，locid第几个样本，tp:当前特征
 def expandOBX(texts,seqid,locid,tp):  # expend the observation at locid for sequence(seqid)
     strt=tp[0]
     for li in tp[1::]:
@@ -146,6 +148,7 @@ def processFeatures(tplist,texts,seqnum,K,fd=1):
     for ti,tp in enumerate(tplist):  # for each template line
         for sid in range(seqnum):  # for each traning sequence.
             for lid in range(len(texts[sid])):
+                #在数据集中根据特征文件获得特征的情况
                 obx=expandOBX(texts,sid,lid,tp)
                 if obx[0]=="B":
                     if bobxs.has_key(obx)==False:
@@ -167,7 +170,10 @@ def processFeatures(tplist,texts,seqnum,K,fd=1):
         del uobxs; del bobxs;
         uobxs,bobxs=uobxnew,bobxnew
     
-    ufnum, bfnum = 0 , 0                    
+    ufnum, bfnum = 0 , 0
+
+    #https://taku910.github.io/crfapp/ 里面说了Bigram 和 Unigram 是意味着 uni/bigrams of output tags.
+    #就是说输出的output tags的区别，一个是一个，一个是两个。因此前面是加上K后面是加上K×K
     for obx in bobxs.keys():
         bobxs[obx]=bfnum
         bfnum+=K*K
@@ -1006,14 +1012,24 @@ def train(datafile,tpltfile,modelfile,mp=1,regtype=2,sigma=1.0,fd=1.0):
     if not os.path.isfile(tpltfile):
         print "Can't find the template file!"
         return -1
+
+    #读取的特征
     tplist=readTemplate(tpltfile)    
     #print tplist
     if not os.path.isfile(datafile):
         print "Data file doesn't exist!"
         return -1
+
+    #texts：特征，seqlens：长度，每一段的长度
+    #oys: 对应的标签，seqnum: 一共有多少段
+    #k: 一共有多少个特征， obydic：标签-序号字典， y2label：序号-标签字典
+
     texts,seqlens,oys,seqnum,K,obydic,y2label=readData(datafile)
     #print seqlens 
-    
+
+    #uobxs unigram的特征，对应特征个数ufnum有多少个,uboxs是对应的特征开始的位置，每一个特征都有17个位置
+    #bobxs bigram的特征，对应特征个数bfnum有多少个
+    #这里的uobxs 和 bobxs是做特征和位置的对应关系，主键是特征，是一个map
     uobxs,bobxs,ufnum,bfnum=processFeatures(tplist,texts,seqnum,K, fd=fd)
     fnum=ufnum+bfnum
     print "Linear CRF in Python.. ver 0.1 "
@@ -1023,7 +1039,12 @@ def train(datafile,tpltfile,modelfile,mp=1,regtype=2,sigma=1.0,fd=1.0):
     if fnum==0:
         print "No Parameters to Learn. "
         return
+
+    #就是说返回每一个片段的每一行对应的特征都在哪儿,他们的起始位置
+    #这是变成按照位置来进行排列，即每一个片段每一个行，可能对应n个特征，然后记录他们之前map中的信息
     uon,bon = calObservexOn(tplist,texts,uobxs,bobxs,seqnum)
+
+    #将这两个变量序列化，存储在“ubox”这个文件中
     with open("ubobx", 'wb') as f:
         pickle.dump([uobxs,bobxs], f)
     del uobxs
@@ -1031,6 +1052,8 @@ def train(datafile,tpltfile,modelfile,mp=1,regtype=2,sigma=1.0,fd=1.0):
     
     print "start to calculate data distribuition. elapsed time:", time.time() - start_time, "seconds. \n "    
     y0=0
+    #这里再做一个对应关系，就是每一个片段的每一行都会n个特征，然后这里让让每一行的output作为这里每个特征的output
+    #最后返回的fss是这没多个（特征和output）各有多少个
     fss=calFSS(texts,oys,uon,bon,ufnum,bfnum,seqnum,K,y0)
     del texts    
     del oys
@@ -1055,7 +1078,8 @@ def train(datafile,tpltfile,modelfile,mp=1,regtype=2,sigma=1.0,fd=1.0):
         theta = theta.reshape(ufnum+bfnum)
     else:
         theta=random_param(ufnum,bfnum)
-    
+
+    #lambda x: 函数(x)，这个写法相当于向函数里面传入一个参数x，然后返回该值
     if mp==1:  # using multi processing
         likeli = lambda x:-likelihood_mp_sa(seqlens,fss,uonarr,uonseqsta,uonlocsta,uonlocend,
                       bonarr,bonseqsta,bonlocsta,bonlocend,x,seqnum,K,ufnum,bfnum,regtype,sigma)
